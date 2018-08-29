@@ -1,0 +1,164 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongo
+data:
+  keyFile.sh: |
+    #!/bin/bash
+    echo ${MONGODB_CLUSTER_KEY} > /data/db/keyFile
+    chmod 0400 /data/db/keyFile
+    echo "keyFile permissions:"
+    ls -al /data/db/keyFile
+---
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mongo
+---
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+spec:
+  selector:
+    matchLabels:
+      app: mongo
+  serviceName: "mongo"
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        app: mongo
+        environment: test
+    spec:
+      serviceAccountName: mongo
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - mongo
+              topologyKey: failure-domain.beta.kubernetes.io/zone
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsUser: 999
+        fsGroup: 999
+      containers:
+        - name: mongo
+          image: quay.io/wealthwizards/percona-mongodb-36:3.6.4-1.2.stretch
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          args:
+            - "mongod"
+            - "--dbpath=/data/db"
+            - "--directoryperdb"
+            - "--replSet=test"
+            - "--auth"
+            - "--bind_ip_all"
+            - "--redactClientLogData"
+            - "--keyFile=/data/db/keyFile"
+            - "--clusterAuthMode=keyFile"
+            - "--auditFormat=JSON"
+            - "--pidfilepath=/data/tmp/mongod.pid"
+            - "--nounixsocket"
+            - "--quiet"
+          lifecycle:
+            preStop:
+              exec:
+                command: ["mongod", "--shutdown", "--dbpath=/data/db"]
+          ports:
+            - containerPort: 27017
+          livenessProbe:
+            exec:
+              command:
+              - ls
+              - /data/tmp/mongod.pid
+            initialDelaySeconds: 30
+            periodSeconds: 5
+          readinessProbe:
+            tcpSocket:
+              port: 27017
+            initialDelaySeconds: 30
+            periodSeconds: 5
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              value: dba
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongo
+                  key: dba-password
+            - name: MONGODB_CLUSTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mongo
+                  key: cluster-key
+            - name: TMPDIR
+              value: /data/tmp
+          volumeMounts:
+            - name: mongo-data
+              mountPath: /data/db
+            - name: keyfile-script
+              mountPath: /docker-entrypoint-extras.d/keyFile.sh
+              subPath: keyFile.sh
+            - name: mongo-tempdir
+              mountPath: /data/tmp
+          resources:
+            requests:
+              memory: "100M"
+              cpu: 0.01
+        - name: mongo-sidecar
+          image: cvallance/mongo-k8s-sidecar
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          env:
+            - name: MONGO_SIDECAR_POD_LABELS
+              value: "app=mongo,environment=test"
+            - name: KUBE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: MONGODB_USERNAME
+              value: dba
+            - name: MONGODB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongo
+                  key: dba-password
+            - name: MONGODB_DATABASE
+              value: admin
+            - name: KUBERNETES_MONGO_SERVICE_NAME
+              value: mongo
+          resources:
+            requests:
+              memory: "50M"
+              cpu: 0.01      
+      volumes:
+        - name: keyfile-script
+          configMap:
+            name: mongo
+            items:
+              - key: keyFile.sh
+                path: keyFile.sh
+            defaultMode: 0550
+        - name: mongo-tempdir
+          emptyDir: {}
+  volumeClaimTemplates:
+    - metadata:
+        name: mongo-data
+        annotations:
+          volume.beta.kubernetes.io/storage-class: "encrypted-gp2-xfs"
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
