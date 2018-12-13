@@ -20,10 +20,10 @@ RUN set -ex; \
 	wget -O /usr/local/bin/gosu.asc "https://github.com/tianon/gosu/releases/download/${GOSU_VERSION}/gosu-${dpkgArch}.asc"; \
 	GOSU_KEY=B42F6819007F00F88E364FD4036A9C25BF357DD4 \
 	export GNUPGHOME="$(mktemp -d)"; \
-	( gpg --keyserver ha.pool.sks-keyservers.net --recv-keys "$GOSU_KEY" \
-      || gpg --keyserver pgp.mit.edu --recv-keys "$GOSU_KEY" \
-      || gpg --keyserver keyserver.pgp.com --recv-keys "$GOSU_KEY" ); \
-	gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \
+	( gpg --no-tty --keyserver ha.pool.sks-keyservers.net --recv-keys "$GOSU_KEY" \
+      || gpg --no-tty --keyserver pgp.mit.edu --recv-keys "$GOSU_KEY" \
+      || gpg --no-tty --keyserver keyserver.pgp.com --recv-keys "$GOSU_KEY" ); \
+	gpg --no-tty --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \
 	rm -r "${GNUPGHOME}" /usr/local/bin/gosu.asc; \
 	chmod +x /usr/local/bin/gosu; \
 	gosu nobody true; \
